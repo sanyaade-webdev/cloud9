@@ -10,7 +10,6 @@
 define(function(require, exports, module) {
 
 var V8Debugger = require("v8debug/V8Debugger");
-var WSV8DebuggerService = require("v8debug/WSV8DebuggerService");
 var ide = require("core/ide");
 
 var v8DebugClient = exports.v8DebugClient = function() {
@@ -18,7 +17,7 @@ var v8DebugClient = exports.v8DebugClient = function() {
 
 (function() {
     this.$startDebugging = function() {
-        var v8dbg = this.$v8dbg = new V8Debugger(0, this.$v8ds);
+        var v8dbg = this.$v8dbg = new V8Debugger(0, exports);
         this.$v8breakpoints = {};
 
         var onChangeRunning = this.onChangeRunning.bind(this);
@@ -32,6 +31,7 @@ var v8DebugClient = exports.v8DebugClient = function() {
         v8dbg.addEventListener("afterCompile", onAfterCompile);
 
         this.setFrame(null);
+        this.onChangeRunning();
 
         // on detach remove all event listeners
         this.removeListeners = function () {
@@ -42,24 +42,9 @@ var v8DebugClient = exports.v8DebugClient = function() {
         };
     };
 
-    this.attach = function() {
-        var _self = this;
-        var onAttach = function(err, dbgImpl) {
-            ide.dispatchEvent("dbg.attached", {dbgImpl: dbgImpl});
-            _self.onChangeRunning();
-            _self.syncAfterAttach();
-        };
-
-        this.$v8ds = new WSV8DebuggerService(ide.socket);
-
-        this.$v8ds.attach(0, function() {
-            _self.$startDebugging();
-            onAttach(null, _self);
-        });
-    };
-
     this.syncAfterAttach = function () {
         var _self = this;
+        // console.log("syncAfterAttach")
         _self.loadScripts(function() {
             _self.backtrace(function() {
                 _self.updateBreakpoints(function() {
@@ -73,20 +58,17 @@ var v8DebugClient = exports.v8DebugClient = function() {
         });
     };
 
+    this.attach = function() {
+        ide.dispatchEvent("dbg.attached", {dbgImpl: this});
+        this.$startDebugging();
+        this.syncAfterAttach();
+    };
+
     this.detach = function(callback) {
         this.setFrame(null);
-        if (!this.$v8dbg)
-            return callback();
-
         this.$v8dbg = null;
         this.onChangeRunning();
-
-        var _self = this;
         this.removeListeners();
-        this.$v8ds.detach(0, function(err) {
-            callback && callback(err);
-            _self.$v8ds = null;
-        });
     };
 
     this.setFrame = function(frame) {
@@ -396,6 +378,7 @@ var v8DebugClient = exports.v8DebugClient = function() {
     this.backtrace = function(callback) {
         var _self = this;
         var model = mdlDbgStack;
+        // console.log("backtrace")
         this.$v8dbg.backtrace(null, null, null, true, function(body, refs) {
             function ref(id) {
                 for (var i=0; i<refs.length; i++) {
@@ -620,27 +603,74 @@ var v8DebugClient = exports.v8DebugClient = function() {
 }).call(v8DebugClient.prototype);
 
 
+// implement v8debugger service
+var Util = require("v8debug/util");
+var EventEmitter = Util.EventEmitter;
+
+Util.implement(exports, EventEmitter);
+
+exports.debuggerCommand = function(tabId, v8Command) {
+    ide.send({
+        command: "debugNode",
+        pid: this.pid,
+        runner: "node",
+        body: JSON.parse(v8Command)
+    });
+};
+
+exports.$onMessage = function(e) {
+    var message = e.message;
+    // console.log("INCOMING: ", message.type, message.body);
+    if (message.type == "node-debug" && message.pid == exports.pid) {
+        exports.emit("debugger_command_0", {data: message.body});
+    }
+};
+
+exports.connect = function(debugReady) {
+    if (this.$state == "connected")
+        return;
+    // console.log("dbg.connecting")
+    this.$state = "connected";
+    ide.addEventListener("socketMessage", this.$onMessage);
+};
+
+exports.disconnect = function() {
+    if (this.$state != "connected")
+        return;
+    // console.log("dbg.disconnecting")
+    this.$state = "";
+    ide.removeEventListener("socketMessage", this.$onMessage);
+};
+
+ide.addEventListener("dbg.state", function(e) {
+    if (e["node-debug"]) {
+        // console.log("dbg.state",exports.dbgImpl, e);
+        ide.send({command: "DebugAttachNode", runner: "node"});
+    }
+});
+
 ide.addEventListener("dbg.ready", function(e) {
     if (e.type == "node-debug-ready") {
+        // console.log("dbg.ready",exports.dbgImpl)
+        exports.pid = parseInt(e.pid, 10);
+        exports.connect();
         if (!exports.dbgImpl) {
             exports.dbgImpl = new v8DebugClient();
-            exports.dbgImpl.attach();
         }
+        exports.dbgImpl.attach();
     }
 });
 
 ide.addEventListener("dbg.exit", function(e) {
+    // console.log("dbg.exit",exports.dbgImpl);
+    exports.pid = exports.$state = null;
+    exports.disconnect();
     if (exports.dbgImpl) {
         exports.dbgImpl.detach();
         exports.dbgImpl = null;
+        exports.removeAllListeners("debugger_command_0");
     }
 });
 
-ide.addEventListener("dbg.state", function(e) {
-    if (e["node-debug"] && !exports.dbgImpl) {
-        exports.dbgImpl = new v8DebugClient();
-        exports.dbgImpl.attach();
-    }
-});
 
 });
