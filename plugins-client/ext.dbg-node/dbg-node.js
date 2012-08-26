@@ -120,9 +120,13 @@ var v8DebugClient = exports.v8DebugClient = function() {
         if (bp.number != 1)
             return;
 
-        var uibp = mdlDbgBreakpoints.queryNode("//breakpoint[@line='" +
-            frame.getAttribute("line") +"' and @path='" +
-            frame.getAttribute("scriptPath") + "']");
+        var uibp = mdlDbgBreakpoints.queryNode(
+            "//breakpoint[@line='" + frame.getAttribute("line") +"' and @path='" +
+            frame.getAttribute("scriptPath") + "']"
+        ) || mdlDbgBreakpoints.queryNode(
+            "//breakpoint[@line='" + bp.line +"' and @path='" +
+            this.getPathFromScriptId(bp.script_id) + "']"
+        );
 
         if (uibp && uibp.getAttribute("enabled") == "true")
             return;
