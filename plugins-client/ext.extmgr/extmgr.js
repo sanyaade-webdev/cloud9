@@ -124,6 +124,7 @@ module.exports = ext.register("ext/extmgr/extmgr", {
         path = path.replace(/(github.com\/[^\/]+\/[^\/]+)\/blob\//, "$1/raw/");
         // If GitHub hosted these using https, this would be useful:
         // path = path.replace(/(https?:..raw.github.com)\/([^\/]+)\/([^\/]+)\/gh-pages/, "http://$2.github.com/$3");
+        path = path.replace(/(https:..github.com)\/([^\/]+)\/([^\/]+)\/?/, "https://raw.github.com/$2/$3/master/$3.js");
         return path;
     },
 
